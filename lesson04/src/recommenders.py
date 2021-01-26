@@ -32,8 +32,7 @@ class MainRecommender:
         self.data = prefilter_items(data)
         
         self.user_item_matrix = self.prepare_matrix(self.data)  # pd.DataFrame
-        self.id_to_itemid, self.id_to_userid, \ 
-            self.itemid_to_id, self.userid_to_id = prepare_dicts(self.user_item_matrix)
+        self.id_to_itemid, self.id_to_userid, self.itemid_to_id, self.userid_to_id = prepare_dicts(self.user_item_matrix)
         
         if weighting:
             self.user_item_matrix = bm25_weight(self.user_item_matrix.T).T 
@@ -105,13 +104,14 @@ class MainRecommender:
         # Top N товаров популярных у этого пользователя
         top_N = popularity[popularity['user_id']==user_id].item_id.values[:N]
 
-        res = top_N.lambda(x: get_similar(x))
+        # Пока без векторизации.. надо проверить как это будет работать
+        res = [get_similar(item_id) for item_id in top_N]
 
         assert len(res) == N, 'Количество рекомендаций != {}'.format(N)
         return res
     
     def get_similar_users_recommendation(self, user_id, N=5):
-    """Рекомендуем топ-N товаров, среди купленных похожими юзерами"""
+        """Рекомендуем топ-N товаров, среди купленных похожими юзерами"""
     
         # Похожие пользователи
         sim_users = self.model.similar_users(self.userid_to_id[user_id], N)

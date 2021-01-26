@@ -62,7 +62,7 @@ def postfilter_items(data, item_features, deps_to_exclude):
     
     return list(set(top_popular + exclude_by_department + cheapest + expensive + top_sales))
 
-def get_similar_items_recommendation(data, model, user_id, N=5):
+def get_similar_items_recommendation(data, model, user_id, itemid_to_id, id_to_itemid, N=5):
     '''get_similar_items_recommendation(transaction_data, model, user_id, number_of_similar_items)'''
     
     def get_similar(item_id, N=2):
@@ -79,10 +79,10 @@ def get_similar_items_recommendation(data, model, user_id, N=5):
     # Top N товаров популярных у этого пользователя
     top_N = popularity[popularity['user_id']==user_id].item_id.values[:N]
     
-    result = top_N.lambda(x: get_similar(x))
+    result = [get_similar(item_id) for item_id in top_N]
     return result
 
-def get_similar_users_recommendation(data, model, user_id, N=5):
+def get_similar_users_recommendation(data, model, user_id, userid_to_id, N=5):
     '''get_similar_users_recommendation(transaction_data, model, user_id, number_of_similar_items)
     '''
     
