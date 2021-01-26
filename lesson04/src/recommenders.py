@@ -8,7 +8,14 @@ from scipy.sparse import csr_matrix
 from implicit.als import AlternatingLeastSquares
 from implicit.nearest_neighbours import ItemItemRecommender  # нужен для одного трюка
 from implicit.nearest_neighbours import bm25_weight, tfidf_weight
-from utils import prefilter_items
+
+import os, sys
+
+module_path = os.path.abspath(os.path.join(os.pardir))
+if module_path not in sys.path:
+    sys.path.append(module_path)
+    
+from src.utils import prefilter_items
 
 class MainRecommender:
     """Рекоммендации, которые можно получить из ALS
