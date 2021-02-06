@@ -9,6 +9,9 @@ from implicit.als import AlternatingLeastSquares
 from implicit.nearest_neighbours import ItemItemRecommender  # нужен для одного трюка
 from implicit.nearest_neighbours import bm25_weight, tfidf_weight
 
+from sklearn.model_selection import train_test_split
+from catboost import CatBoostClassifier
+
 import os, sys
 
 module_path = os.path.abspath(os.path.join(os.pardir))
@@ -166,3 +169,147 @@ class MainRecommender:
 
         assert len(res) == N, 'Количество рекомендаций != {}'.format(N)
         return res
+
+    
+class SecondLayerRecommender:
+    """Модель второго уровня (Классификатор, Ранкер)
+    
+    Input
+    -----
+    data: pd.DataFrame
+        Матрица взаимодействий user-item
+    first_layer_recs: pd.DataFrame
+        Рекомендации из модели первого уровня
+    first_layer_model: MainRecommender
+        Обученная модель первого уровня
+    N: int
+        Количество кандидатов из модели первого уровня
+    user_features: pd.DataFrame
+        Данные юзеров
+    user_features: pd.DataFrame
+        Данные айтемов 
+    cat_features: Tuple
+        список категориальных фичей
+    fe_lambdas: function
+        Набор действий над данными (Feature Engineering)
+    iterations: int
+    rate: float
+    """
+    
+    def __init__(self, data, first_layer_model, N, user_features, item_features, cat_features, fe_lambdas=None, iterations=50, rate=0.1): 
+        
+        self.user_features = user_features
+        self.item_features = item_features
+        self.first_model = first_layer_model
+        self.fe_lambdas = fe_lambdas
+        
+        self.N = N
+        
+        self.data = self.prepare_dataset(data)
+        
+        #TODO: feature ingineering here
+        
+        self.cat_features = cat_features
+        self.model = self.fit(iterations, rate)
+
+    @staticmethod
+    def prepare_table(data, matrix, targets=True):
+        
+        df=pd.DataFrame({'user_id':data.user_id.values.repeat(len(data.als[0])),
+                 'item_id':np.concatenate(data.als.values)})
+        result = df.copy()
+        if targets:
+            result = matrix[['user_id', 'item_id']].copy()
+            result['target'] = 1  # тут только покупки 
+            result = df.merge(result, on=['user_id', 'item_id'], how='left')
+            result['target'].fillna(0, inplace=True)
+        
+        return result
+    
+    @staticmethod
+    def append_features(data, features, on_field):
+        return data.merge(features, on=on_field, how='left')
+    
+    def append_embeddings(self, data):
+        embs = pd.DataFrame(self.first_model.model.item_factors)
+        embs['item_id'] = embs.index
+        embs['item_id'] = embs['item_id'].apply(lambda x: self.first_model.id_to_itemid[x])
+
+        result = data.merge(embs, on='item_id', how='left')
+        
+        embs = pd.DataFrame(self.first_model.model.user_factors)
+        embs['user_id'] = embs.index
+        embs['user_id'] = embs['user_id'].apply(lambda x: self.first_model.id_to_userid[x])
+
+        return result.merge(embs, on='user_id', how='left')
+    
+    def prepare_dataset(self, data, targets=True):
+        
+        result = pd.DataFrame(data.user_id.unique())
+        result.columns = ('user_id',)
+        result['als'] = self.first_model.get_all_recommendations(result['user_id'], N=self.N)
+        result = self.prepare_table(result, data, targets=targets)
+        
+        if self.user_features is not None:
+            result = self.append_features(result, self.user_features, on_field='user_id')
+        
+        if self.item_features is not None:
+            result = self.append_features(result, self.item_features, on_field='item_id')
+        
+        result = self.append_embeddings(result)
+        result['manufacturer'] = result['manufacturer'].fillna(0).astype('int')
+        
+        if self.fe_lambdas is not None:
+            result = fe_lambdas(result)
+        
+        return result.fillna(0)
+    
+    
+    def fit(self, iterations=50, learning_rate=0.1, loss='Logloss'):
+        """Обучает CatBoost"""
+        
+        X = self.data.drop('target', axis=1)
+        y = self.data[['target']]
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, shuffle=True, random_state=0)
+        
+        model = CatBoostClassifier(
+            iterations=iterations,
+            learning_rate=learning_rate,
+            loss_function=loss,
+            custom_loss=['AUC', 'Accuracy']
+        )
+        
+        model.fit(
+            X_train, y_train,
+            cat_features=self.cat_features,
+            eval_set=(X_test, y_test),
+            plot=True,
+            verbose=False
+        )
+        
+        return model
+    
+    def get_all_recommendations(self, user_ids, N=5):
+        """Вычислить N рекомендаций для юзеров из списка user_ids"""
+        
+        test_df = pd.DataFrame(user_ids)
+        test_df.columns = ('user_id',)
+        
+        test_df = self.prepare_dataset(test_df, targets=False)
+        
+        preds = self.model.predict_proba(test_df)
+        
+        # Мерджим полученные вероятности с таблицей user_id - item_id
+        preds_df = pd.DataFrame(preds[:,1:])
+        preds_df.columns = ('probabilities',)
+        prob_df = test_df.join(preds_df)
+        
+        # Группируем айтемы по юзеру сортируя по убыванию probability
+        sorted_prob = prob_df.sort_values('probabilities', ascending=False).reset_index(drop=True)
+        result = sorted_prob.groupby('user_id')['item_id'].unique().reset_index()
+        
+        result.columns = ('user_id', 'recommendations')
+        result['recommendations'] = result['recommendations'].apply(lambda x: x[:N])
+        return result
+        
