@@ -30,6 +30,7 @@ class MainRecommender:
     """
     
     def __init__(self, data, n_factors=70,
+                               items_to_filter=[],
                                top_5000=False,
                                strip_not_popular=False,
                                strip_outdated=False,
@@ -38,7 +39,7 @@ class MainRecommender:
                                B=0.5): 
         
         # your_code. Это не обязательная часть. Но если вам удобно что-либо посчитать тут - можно это сделать
-        self.data = prefilter_items(data, top_5000, strip_not_popular, strip_outdated)
+        self.data = prefilter_items(data, items_to_filter, top_5000, strip_not_popular, strip_outdated)
         
         self.user_item_matrix = self.prepare_matrix(self.data)  # pd.DataFrame
         self.id_to_itemid, self.id_to_userid, self.itemid_to_id, self.userid_to_id = self.prepare_dicts(self.user_item_matrix)
@@ -190,18 +191,21 @@ class SecondLayerRecommender:
         Данные айтемов 
     cat_features: Tuple
         список категориальных фичей
+    to_filter: list
+        Item_ids которые нужно убрать из предсказаний (требования бизнеса)
     fe_lambdas: function
         Набор действий над данными (Feature Engineering)
     iterations: int
     rate: float
     """
     
-    def __init__(self, data, first_layer_model, N, user_features, item_features, cat_features, fe_lambdas=None, iterations=50, rate=0.1): 
+    def __init__(self, data, first_layer_model, N, user_features, item_features, cat_features, to_filter=None, fe_lambdas=None, iterations=50, rate=0.1): 
         
         self.user_features = user_features
         self.item_features = item_features
         self.first_model = first_layer_model
         self.fe_lambdas = fe_lambdas
+        self.to_filter = to_filter if to_filter is not None else []
         
         self.N = N
         
@@ -248,6 +252,7 @@ class SecondLayerRecommender:
         result = pd.DataFrame(data.user_id.unique())
         result.columns = ('user_id',)
         result['als'] = self.first_model.get_all_recommendations(result['user_id'], N=self.N)
+        
         result = self.prepare_table(result, data, targets=targets)
         
         if self.user_features is not None:
