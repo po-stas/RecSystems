@@ -1,11 +1,21 @@
 import numpy as np
 
-def prefilter_items(data_train, items_to_filter=[], top_5000=True, strip_not_popular=True, strip_outdated=True):
+def prefilter_items(data_train, items_to_filter=[], N=0, top_5000=True, strip_not_popular=True, strip_outdated=True, strip_not_selling=True, strip_cheapest=True):
     
     result = data_train.copy()
     
-    # Убираем товары из списка для фильтрации (по требованиям бизнеса)
+    # Убираем товары из списка для фильтрации (Какие-нибудь дополнительныет требования)
     result.loc[result['item_id'].isin(items_to_filter), 'item_id'] = 999999
+    
+    # Убираем top N по популярности
+    if N > 0:
+        popularity = data_train.groupby('item_id')['user_id'].nunique().reset_index()
+        popularity['user_id'] = popularity['user_id'] / data_train['user_id'].nunique()
+        popularity.rename(columns={'user_id': 'share_unique_users'}, inplace=True)
+
+        top_popular = popularity[popularity['share_unique_users'] > 0.5].item_id.tolist()
+        
+        result.loc[result['item_id'].isin(top_popular[:N]), 'item_id'] = 999999
     
     # Оставим только 5000 самых популярных товаров
     if top_5000:
@@ -16,20 +26,6 @@ def prefilter_items(data_train, items_to_filter=[], top_5000=True, strip_not_pop
         #добавим, чтобы не потерять юзеров
         result.loc[~result['item_id'].isin(top_5000), 'item_id'] = 999999
     
-    # В prefilter мы будем убирать из трейна только непопулярные и давно не покупаемые, чтобы не снизить метрики
-    # Фильтрация по пожеланиям бизнеса (убрать очень популярные, определенных категорий, слишком дорогие и тп)
-    # Будет осуществляться в postfilter, чтобы это не затронуло фазу обучения модели 
-    # (учиться мы будем на всех товарах, которые реально покупают - тк они присутствуют в таргетах трейна и теста
-    # и именно их мы будем использовать для вычисления метрик. 
-    # А если мы исключим по требованию бизнеса из обучения товар который люди реально покупают - то он не попадет в рекомендации
-    # И при вычислении метрик - это будет снижать нам скор.
-    
-    # Вообще, в моем понимании, фильтрацию по требованиям бизнеса нужно делать уже после разработки модели
-    # Тое-сть, после того как мы поработаем с трейновыми данными, найдем все решения, максимизирующие выбранные метрики, 
-    # Подберем параметры, обучим рабочую модель и утвердим ее у бизнеса... 
-    # Вот уже потом - из наших, максимально точных рекомендаций, мы будем исключать те позиции, которые бизнес не хочет
-    # рекомендовать по каким-то своим соображениям (и так популярны, слишком дешевы/дороги и просто потому, что не хочет и тп)
-    
     # Уберем самые непопулряные 
     if strip_not_popular:
         popularity = data_train.groupby('item_id')['user_id'].nunique().reset_index()
@@ -37,15 +33,27 @@ def prefilter_items(data_train, items_to_filter=[], top_5000=True, strip_not_pop
         popularity.rename(columns={'user_id': 'share_unique_users'}, inplace=True)
         top_notpopular = popularity[popularity['share_unique_users'] < 0.01].item_id.unique().tolist()
         result.loc[result['item_id'].isin(top_notpopular), 'item_id'] = 999999
+        
+    # Продавшиеся менее 50 раз
+    if strip_not_selling:
+        popularity = data_train.groupby('item_id')['quantity'].sum().reset_index()
+        popularity.rename(columns={'quantity': 'n_sold'}, inplace=True)
+        bottom_50 = popularity.sort_values('n_sold', ascending=True).head(50).item_id.tolist()
+        result.loc[result['item_id'].isin(bottom_50), 'item_id'] = 999999
     
     # Уберем товары, которые не продавались за последние 12 месяцев
     if strip_outdated:
         recent = data_train[data_train['week_no'] > data_train['week_no'].max() - 52].item_id.unique().tolist()
         result.loc[~result['item_id'].isin(recent), 'item_id'] = 999999
+        
+    if strip_cheapest:
+        data_train['price'] = data_train['sales_value'] / (np.maximum(data_train['quantity'], 1))
+        cheapest = data_train.loc[data_train.price < data_train.price.quantile(0.1)].item_id.tolist()
+        result.loc[result['item_id'].isin(cheapest), 'item_id'] = 999999
     
     return result
 
-def postfilter_items(data, item_features, deps_to_exclude, N=5, most_sold=False):
+def postfilter_items(data, item_features, deps_to_exclude=[], N=3, filter_cheapest=True, most_sold=False):
     
     """Эта функция будет возвращать списки item_id на исключение (для использования их в filter например)"""
     
@@ -54,23 +62,29 @@ def postfilter_items(data, item_features, deps_to_exclude, N=5, most_sold=False)
     popularity['user_id'] = popularity['user_id'] / data['user_id'].nunique()
     popularity.rename(columns={'user_id': 'share_unique_users'}, inplace=True)
     
-    top_popular = popularity[popularity['share_unique_users'] > 0.5].item_id.tolist()
+    top_popular = popularity[popularity['share_unique_users'] > 0.5].item_id.tolist()[:N]
     
     # Уберем не интересные для рекоммендаций категории (department)
-    exclude_by_department = item_features[item_features['DEPARTMENT'].isin(deps_to_exclude)].PRODUCT_ID.unique().tolist()
+    exclude_by_department = item_features[item_features['department'].isin(deps_to_exclude)].item_id.unique().tolist()
     
-    # Уберем слишком дешевые товары (на них не заработаем). 1 покупка из рассылок стоит 60 руб. 
-    # cheapest = data.loc[data.price < data.price.quantile(0.2)].item_id.tolist()
+    # Уберем слишком дешевые товары (<1$). 1 покупка из рассылок стоит 60 руб. 
+    data['price'] = data['sales_value'] / (np.maximum(data['quantity'], 1))
+    cheapest = data.loc[data.price < data.price.quantile(0.1)].item_id.tolist()
+    if not filter_cheapest:
+        cheapest = []
     
     # Уберем слишком дорогие товары
+    # data['price'] = data['sales_value'] / (np.maximum(data['quantity'], 1))
     # expensive = data.loc[data.price > data.price.quantile(0.99994)].item_id.tolist()
     
     # Самые продаваемые
     sales = data.groupby('item_id')['quantity'].sum().reset_index()
     sales.columns = ('item_id', 'sales_sum')
     top_sales = sales.loc[(sales.sales_sum > 10000000)].item_id.tolist()
+    if not most_sold:
+        top_sales = []
     
-    return list(set(top_popular + exclude_by_department + (top_sales if most_sold else [])))[:N] # cheapest + expensive + 
+    return list(set(top_popular + exclude_by_department + top_sales + cheapest))
 
 
 def get_similar_items_recommendation(data, model, user_id, itemid_to_id, id_to_itemid, N=5):
