@@ -1,6 +1,6 @@
 import numpy as np
 
-def prefilter_items(data_train, items_to_filter=[], N=0, top_5000=True, strip_not_popular=True, strip_outdated=True, strip_not_selling=True, strip_cheapest=True):
+def prefilter_items(data_train, items_to_filter=[], N=0, top_N=None, strip_not_popular=True, strip_outdated=True, strip_not_selling=True, strip_cheapest=True):
     
     result = data_train.copy()
     
@@ -18,13 +18,13 @@ def prefilter_items(data_train, items_to_filter=[], N=0, top_5000=True, strip_no
         result.loc[result['item_id'].isin(top_popular[:N]), 'item_id'] = 999999
     
     # Оставим только 5000 самых популярных товаров
-    if top_5000:
+    if top_N:
         popularity = data_train.groupby('item_id')['quantity'].sum().reset_index()
         popularity.rename(columns={'quantity': 'n_sold'}, inplace=True)
-        top_5000 = popularity.sort_values('n_sold', ascending=False).head(5000).item_id.tolist()
+        only_top_N = popularity.sort_values('n_sold', ascending=False).head(top_N).item_id.tolist()
     
         #добавим, чтобы не потерять юзеров
-        result.loc[~result['item_id'].isin(top_5000), 'item_id'] = 999999
+        result.loc[~result['item_id'].isin(only_top_N), 'item_id'] = 999999
     
     # Уберем самые непопулряные 
     if strip_not_popular:

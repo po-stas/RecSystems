@@ -33,7 +33,7 @@ class FirstLayerRecommender:
     
     def __init__(self, data, n_factors=70, K=5, regularization=0.001, iterations=15,
                                items_to_filter=[],
-                               top_5000=False,
+                               top_N=None,
                                strip_top_N=3,
                                strip_not_popular=False,
                                strip_outdated=False,
@@ -43,7 +43,7 @@ class FirstLayerRecommender:
                                B=0.5): 
         
         # your_code. Это не обязательная часть. Но если вам удобно что-либо посчитать тут - можно это сделать
-        self.data = prefilter_items(data, items_to_filter, N=strip_top_N, top_5000=top_5000, strip_not_popular=strip_not_popular, 
+        self.data = prefilter_items(data, items_to_filter, N=strip_top_N, top_N=top_N, strip_not_popular=strip_not_popular, 
                                     strip_outdated=strip_outdated, strip_cheapest=strip_cheapest)
         
         self.user_item_matrix = self.prepare_matrix(self.data)  # pd.DataFrame
@@ -363,7 +363,7 @@ class SecondLayerRecommender:
         
         return model
     
-    def get_all_recommendations(self, user_ids, to_filter=[], N=5):
+    def get_all_recommendations(self, user_ids, to_filter=[], N=5, recommend_1_not_bought=True, bought=None):
         """Вычислить N рекомендаций для юзеров из списка user_ids"""
         
         test_df = pd.DataFrame(user_ids)
@@ -383,7 +383,30 @@ class SecondLayerRecommender:
         result = sorted_prob.groupby('user_id')['item_id'].unique().reset_index()
         
         result.columns = ('user_id', 'recommendations')
-        result['recommendations'] = result['recommendations'].apply(lambda x: [item for item in x if item not in to_filter][:N])
+        
+        # Финальный пост фильтр - если есть
+        result['recommendations'] = result['recommendations'].apply(lambda x: [item for item in x if item not in to_filter])
+        
+        
+        if recommend_1_not_bought and bought is not None:
+            
+            def check_and_del(a, b, N=5):
+                if set(a[:N]).issubset(b):
+                    a.remove(a[N-1])
+                    check_and_del(a, b, N)
+            
+            result = result.merge(bought, on='user_id', how='left')
+            
+            # Если первые N рекоммендаций полностью присутствуют в bought для юзера, начинаем удалять N-ую позицию
+            # Пока не будет хотя бы одной рекоммендации не из bought
+            
+            for i in range(result.shape[0]):
+                check_and_del(result.iloc[i].recommendations, result.iloc[i].actual, N)
+               
+            result.drop('actual', axis=1, inplace=True)
+            
+        result['recommendations'] = result['recommendations'].apply(lambda x: x[:N])
+                                                                        
         return result
         
 
