@@ -479,6 +479,6 @@ class SecondLayerLGBM(SecondLayerRecommender):
         
         model = LGBMClassifier(**parameters, categorical_column=list(self.cat_features), )
         
-        model.fit(X_train, y_train, eval_set=[(X_test, y_test)])
+        model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
         
         return model
