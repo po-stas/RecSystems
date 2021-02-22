@@ -3,4 +3,5 @@ data
 data/
 ./data/
 raw*.*
-
+test.*
+test*
