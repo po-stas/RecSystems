@@ -37,7 +37,7 @@ class FirstLayerRecommender:
                                strip_top_N=3,
                                strip_not_popular=False,
                                strip_outdated=False,
-                               strip_cheapest=False,
+                               strip_cheapest=1.0,
                                weighting=True,  
                                K1=100,
                                B=0.5): 
@@ -260,6 +260,7 @@ class SecondLayerRecommender:
         self.embeddings = use_embeddings
         self.cat_features = cat_features
         self.N = N
+        self.popular = self.first_model.popular.tolist()
         
         self.data = self.prepare_dataset(data, embeddings=self.embeddings)
         
@@ -393,6 +394,9 @@ class SecondLayerRecommender:
             def check_and_del(a, b, N=5):
                 if set(a[:N]).issubset(b):
                     a.remove(a[N-1])
+                    if len(a) < N:
+                        a.append(self.popular[0])
+                        self.popular.remove(self.popular[0])
                     check_and_del(a, b, N)
             
             result = result.merge(bought, on='user_id', how='left')
@@ -401,6 +405,7 @@ class SecondLayerRecommender:
             # Пока не будет хотя бы одной рекоммендации не из bought
             
             for i in range(result.shape[0]):
+                self.popular = deepcopy(self.first_model.popular).tolist()
                 check_and_del(result.iloc[i].recommendations, result.iloc[i].actual, N)
                
             result.drop('actual', axis=1, inplace=True)

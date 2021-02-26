@@ -1,6 +1,6 @@
 import numpy as np
 
-def prefilter_items(data_train, items_to_filter=[], N=0, top_N=None, strip_not_popular=True, strip_outdated=True, strip_not_selling=True, strip_cheapest=True):
+def prefilter_items(data_train, items_to_filter=[], N=0, top_N=None, strip_not_popular=True, strip_outdated=True, strip_not_selling=True, strip_cheapest=1.0):
     
     result = data_train.copy()
     
@@ -47,8 +47,8 @@ def prefilter_items(data_train, items_to_filter=[], N=0, top_N=None, strip_not_p
         result.loc[~result['item_id'].isin(recent), 'item_id'] = 999999
         
     if strip_cheapest:
-        data_train['price'] = data_train['sales_value'] / (np.maximum(data_train['quantity'], 1))
-        cheapest = data_train.loc[data_train.price < data_train.price.quantile(0.1)].item_id.tolist()
+        data_train['price'] = data_train['sales_value'] / data_train['quantity']
+        cheapest = data_train.loc[data_train.price < strip_cheapest].item_id.tolist()
         result.loc[result['item_id'].isin(cheapest), 'item_id'] = 999999
     
     return result
